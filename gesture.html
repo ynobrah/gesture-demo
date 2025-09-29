@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hand Gesture Control Demo</title>
+<style>
+body { margin:0; font-family:sans-serif; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; background:#f0f0f0; }
+video { width:90%; height:auto; border-radius:12px; }
+#status { margin-top:10px; font-size:18px; font-weight:bold; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+</head>
+<body>
+<video id="video" autoplay playsinline muted></video>
+<div id="status">Waiting for gesture...</div>
+
+<script>
+const videoElement = document.getElementById('video');
+const status = document.getElementById('status');
+
+const hands = new Hands({
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+
+hands.setOptions({
+  maxNumHands: 1,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.7,
+  minTrackingConfidence: 0.7
+});
+
+hands.onResults(results => {
+  if(results.multiHandLandmarks && results.multiHandLandmarks.length>0){
+    const landmarks = results.multiHandLandmarks[0];
+    const wrist = landmarks[0];
+    const indexTip = landmarks[8];
+    const dx = indexTip.x - wrist.x;
+    const dy = indexTip.y - wrist.y;
+
+    if(dy<-0.15){ status.innerText="Gesture: Raise Hand → YouTube"; window.location.href="https://www.youtube.com"; }
+    else if(dx>0.15){ status.innerText="Gesture: Swipe Right → Messages"; window.location.href="sms:"; }
+    else if(dx<-0.15){ status.innerText="Gesture: Swipe Left → Camera"; window.location.href="https://www.google.com"; }
+  } else {
+    status.innerText="Waiting for gesture...";
+  }
+});
+
+const camera = new Camera(videoElement, {
+  onFrame: async () => { await hands.send({image: videoElement}); },
+  width: 640,
+  height: 480
+});
+camera.start();
+</script>
+</body>
+</html>
