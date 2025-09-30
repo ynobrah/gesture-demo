@@ -1,40 +1,155 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Hand Gesture Control Demo</title>
-<style>
-body { margin:0; font-family:sans-serif; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; background:#f0f0f0; }
-video { width:90%; height:auto; border-radius:12px; }
-#status { margin-top:10px; font-size:18px; font-weight:bold; }
-</style>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Hand Gesture Control Demo</title>
+  <style>
+    body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; min-height:100vh; background:#f0f0f0; }
+    #container { position:relative; width:100%; max-width:720px; margin-top:20px; }
+    video { width:100%; height:auto; border-radius:12px; display:block; background:#000; }
+    canvas.overlay { position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none; }
+    #status { margin:14px 0; font-size:16px; font-weight:600; color:#111; text-align:center; width:100%; max-width:720px; }
+    @media (orientation:portrait) { #container { max-width:640px; } }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 </head>
 <body>
-<video id="video" autoplay playsinline muted></video>
-<div id="status">Waiting for gesture...</div>
-<script>
-const videoElement = document.getElementById('video');
-const status = document.getElementById('status');
+  <div id="container">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay" class="overlay"></canvas>
+  </div>
+  <div id="status">Waiting for hand...</div>
 
-const hands = new Hands({
-  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-});
+  <script>
+    // Elements
+    const videoElement = document.getElementById('video');
+    const overlay = document.getElementById('overlay');
+    const status = document.getElementById('status');
+    const overlayCtx = overlay.getContext('2d');
 
-hands.setOptions({
-  maxNumHands: 1,
-  modelComplexity: 1,
-  minDetectionConfidence: 0.7,
-  minTrackingConfidence: 0.7
-});
+    // Resize overlay to match video element size
+    function resizeOverlay() {
+      const rect = videoElement.getBoundingClientRect();
+      overlay.width = rect.width;
+      overlay.height = rect.height;
+      overlay.style.left = rect.left + 'px';
+      overlay.style.top = rect.top + 'px';
+    }
+    window.addEventListener('resize', () => { setTimeout(resizeOverlay, 50); });
 
-hands.onResults(results => {
-  if(results.multiHandLandmarks && results.multiHandLandmarks.length>0){
-    const landmarks = results.multiHandLandmarks[0];
-    const wrist = landmarks[0];
-    const indexTip = landmarks[8];
+    // Gesture action throttle
+    let lastCommandTime = 0;
+    function performAction(cmd){
+      const now = Date.now();
+      if(now - lastCommandTime < 1200) return;
+      lastCommandTime = now;
+      if(cmd === "YouTube"){ status.innerText = "Action: Opening YouTube"; window.location.href = "https://www.youtube.com"; }
+      else if(cmd === "Messages"){ status.innerText = "Action: Opening Messages"; window.location.href = "sms:"; }
+      else if(cmd === "Camera"){ status.innerText = "Action: Opening Camera"; window.location.href = "https://www.google.com"; }
+    }
+
+    // Create MediaPipe Hands instance
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.6,
+      minTrackingConfidence: 0.6
+    });
+
+    // Simple stability filter
+    let stableGesture = { name: null, count: 0 };
+
+    // Convert normalized landmark to overlay coordinates
+    function landmarkToPoint(landmark){
+      const w = overlay.width;
+      const h = overlay.height;
+      return { x: landmark.x * w, y: landmark.y * h };
+    }
+
+    hands.onResults(results => {
+      // update overlay size if needed
+      resizeOverlay();
+      overlayCtx.clearRect(0,0,overlay.width,overlay.height);
+
+      if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0){
+        const landmarks = results.multiHandLandmarks[0];
+
+        // draw landmarks and connections for debugging and confirmation
+        drawConnectors(overlayCtx, landmarks, HAND_CONNECTIONS, {color:'#00FF88', lineWidth:2});
+        drawLandmarks(overlayCtx, landmarks, {color:'#FF4444', lineWidth:1});
+
+        // wrist = index 0, index tip = index 8
+        const wrist = landmarks[0];
+        const indexTip = landmarks[8];
+
+        // compensate mirrored camera by using wrist minus indexTip
+        const dx = wrist.x - indexTip.x;
+        const dy = wrist.y - indexTip.y;
+
+        // thresholds for detection (tunable)
+        let detected = null;
+        if(dy < -0.12) detected = "YouTube";       // index tip significantly above wrist -> raise
+        else if(dx > 0.12) detected = "Messages";  // index tip significantly to the left of wrist in mirrored coords -> swipe right
+        else if(dx < -0.12) detected = "Camera";   // index tip to the right -> swipe left
+
+        if(detected){
+          if(stableGesture.name === detected) stableGesture.count++;
+          else { stableGesture.name = detected; stableGesture.count = 1; }
+          status.innerText = `Detected: ${detected} (${stableGesture.count})`;
+
+          // require stability of 5 consecutive frames
+          if(stableGesture.count >= 5){
+            performAction(detected);
+            stableGesture.name = null;
+            stableGesture.count = 0;
+          }
+        } else {
+          stableGesture.name = null;
+          stableGesture.count = 0;
+          status.innerText = "Waiting for stable gesture...";
+        }
+      } else {
+        stableGesture.name = null;
+        stableGesture.count = 0;
+        status.innerText = "Waiting for hand...";
+      }
+    });
+
+    // Start camera with preference for back camera
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await hands.send({image: videoElement});
+      },
+      width: 640,
+      height: 480,
+      facingMode: { ideal: "environment" } // prefer back camera
+    });
+
+    // Start sequence with permission handling
+    async function startCamera() {
+      try {
+        await camera.start();
+        // small delay then resize overlay
+        setTimeout(resizeOverlay, 300);
+        status.innerText = "Camera started. Show your hand.";
+      } catch (err) {
+        console.error('Camera start error:', err);
+        status.innerText = "Camera access required. Allow camera and reload the page.";
+      }
+    }
+
+    // Kick off
+    startCamera();
+  </script>
+</body>
+</html>    const indexTip = landmarks[8];
 
     // Adjust for mirrored camera
     const dx = wrist.x - indexTip.x;
