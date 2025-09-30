@@ -72,6 +72,100 @@ hands.onResults(results => {
     // compute dx, dy (normalized)
     const dx = wrist.x - indexTip.x;
     const dy = wrist.y - indexTip.y;
+
+    // detection logic (tunable thresholds)
+    let detected = null;
+    if(dy < -0.12) detected = "RAISE";
+    else if(dx > 0.12) detected = "SWIPE_RIGHT";
+    else if(dx < -0.12) detected = "SWIPE_LEFT";
+
+    if(detected){
+      if(stableGesture.name === detected) stableGesture.count++;
+      else { stableGesture.name = detected; stableGesture.count = 1; }
+    } else {
+      stableGesture.name = null; stableGesture.count = 0;
+    }
+
+    lastDetected = detected || "NONE";
+
+    status.innerText = `Detected: ${lastDetected} (${stableGesture.count})`;
+    debug.innerText = 
+`dx: ${dx.toFixed(3)}   dy: ${dy.toFixed(3)}
+detected: ${lastDetected}
+stableCount: ${stableGesture.count}
+landmarks: ${lm.length}
+tip x,y: ${indexTip.x.toFixed(3)}, ${indexTip.y.toFixed(3)}
+wrist x,y: ${wrist.x.toFixed(3)}, ${wrist.y.toFixed(3)}
+`;
+  } else {
+    overlayCtx.clearRect(0,0,overlay.width,overlay.height);
+    status.innerText = "Waiting for hand...";
+    debug.innerText = "debug: no hand detected";
+    stableGesture.name = null; stableGesture.count = 0;
+    lastDetected = "NONE";
+  }
+});
+
+// Start camera preferring back camera
+const camera = new Camera(videoElement, {
+  onFrame: async () => { await hands.send({image: videoElement}); },
+  width: 640,
+  height: 480,
+  facingMode: { ideal: "environment" }
+});
+
+async function start() {
+  try {
+    await camera.start();
+    status.innerText = "Camera started. Show your hand.";
+    setTimeout(resizeOverlay, 300);
+  } catch (err) {
+    status.innerText = "Camera error: " + (err && err.message ? err.message : String(err));
+    debug.innerText = "Camera start failed. Check camera permission and try a different browser.";
+  }
+}
+
+start();
+</script>
+</body>
+</html>  overlay.height = rect.height;
+}
+window.addEventListener('resize', () => { setTimeout(resizeOverlay, 50); });
+
+// MediaPipe Hands init
+const hands = new Hands({
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+hands.setOptions({
+  maxNumHands: 1,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.6,
+  minTrackingConfidence: 0.6
+});
+
+let stableGesture = { name: null, count: 0 };
+let lastDx = 0, lastDy = 0, lastDetected = null;
+
+// Draw helper (maps normalized coords to overlay)
+function drawLandmarksOnOverlay(landmarks){
+  overlayCtx.clearRect(0,0,overlay.width,overlay.height);
+  // draw connectors and landmarks using mediapipe drawing utils
+  drawConnectors(overlayCtx, landmarks, HAND_CONNECTIONS, {color:'#00FF88', lineWidth:2});
+  drawLandmarks(overlayCtx, landmarks, {color:'#FF4444', lineWidth:2});
+}
+
+hands.onResults(results => {
+  resizeOverlay();
+  if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0){
+    const lm = results.multiHandLandmarks[0];
+    drawLandmarksOnOverlay(lm);
+
+    const wrist = lm[0];
+    const indexTip = lm[8];
+
+    // compute dx, dy (normalized)
+    const dx = wrist.x - indexTip.x;
+    const dy = wrist.y - indexTip.y;
     lastDx = dx;
     lastDy = dy;
 
