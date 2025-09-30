@@ -1,104 +1,116 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
-  <title>Gesture Control</title>
-  <style>
-    body { margin: 0; display: flex; flex-direction: column; align-items: center; background: #111; color: white; }
-    video, canvas { position: absolute; left: 0; top: 0; transform: scaleX(-1); } 
-    #status, #debug { position: relative; z-index: 10; margin-top: 480px; padding: 10px; }
-    #debug { font-size: 12px; color: #0f0; white-space: pre; }
-  </style>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hand Gesture Control Demo</title>
+<style>
+body { margin:0; font-family:sans-serif; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; background:#f0f0f0; }
+video { width:90%; height:auto; border-radius:12px; }
+#status { margin-top:10px; font-size:18px; font-weight:bold; }
+canvas { position:absolute; top:0; left:0; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 </head>
 <body>
-  <video id="video" autoplay playsinline></video>
-  <canvas id="overlay"></canvas>
-  <div id="status">Loading...</div>
-  <div id="debug">debug: waiting...</div>
+<video id="video" autoplay playsinline muted></video>
+<canvas id="overlay"></canvas>
+<div id="status">Waiting for hand...</div>
+<script>
+const videoElement = document.getElementById('video');
+const overlay = document.getElementById('overlay');
+const overlayCtx = overlay.getContext('2d');
+const status = document.getElementById('status');
 
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+function resizeOverlay(){
+  overlay.width = videoElement.videoWidth;
+  overlay.height = videoElement.videoHeight;
+}
 
-  <script>
-    const videoElement = document.getElementById('video');
-    const overlay = document.getElementById('overlay');
-    const overlayCtx = overlay.getContext('2d');
-    const status = document.getElementById('status');
-    const debug = document.getElementById('debug');
+const hands = new Hands({
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
 
-    function resizeOverlay(){
-      overlay.width = videoElement.videoWidth;
-      overlay.height = videoElement.videoHeight;
-    }
-    window.addEventListener('resize', () => { setTimeout(resizeOverlay, 50); });
+hands.setOptions({
+  maxNumHands: 1,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.6,
+  minTrackingConfidence: 0.6
+});
 
-    let lastCommandTime = 0;
-    function performAction(cmd){
-      const now = Date.now();
-      if(now - lastCommandTime < 1200) return;
-      lastCommandTime = now;
-      if(cmd === "YouTube"){ status.innerText = "Action: Opening YouTube"; window.location.href = "https://www.youtube.com"; }
-      else if(cmd === "Messages"){ status.innerText = "Action: Opening Messages"; window.location.href = "sms:"; }
-      else if(cmd === "Camera"){ status.innerText = "Action: Opening Camera"; window.location.href = "https://www.google.com"; }
-    }
+let stableGesture = { name: null, count: 0 };
+let lastCommandTime = 0;
 
-    const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+function performAction(cmd){
+  const now = Date.now();
+  if(now - lastCommandTime < 1200) return;
+  lastCommandTime = now;
+  if(cmd === "YouTube"){ status.innerText="Action: Opening YouTube"; window.location.href="https://www.youtube.com"; }
+  else if(cmd === "Messages"){ status.innerText="Action: Opening Messages"; window.location.href="sms:"; }
+  else if(cmd === "Camera"){ status.innerText="Action: Opening Camera"; window.location.href="https://www.google.com"; }
+}
 
-    let stableGesture = { name: null, count: 0 };
+function drawLandmarksOnOverlay(landmarks){
+  overlayCtx.clearRect(0,0,overlay.width,overlay.height);
+  drawConnectors(overlayCtx, landmarks, HAND_CONNECTIONS, {color:'#00FF88', lineWidth:2});
+  drawLandmarks(overlayCtx, landmarks, {color:'#FF4444', lineWidth:2});
+}
 
-    hands.onResults(results => {
-      resizeOverlay();
-      overlayCtx.clearRect(0,0,overlay.width,overlay.height);
-
-      if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0){
-        const lm = results.multiHandLandmarks[0];
-        drawConnectors(overlayCtx, lm, HAND_CONNECTIONS, {color:'#00FF88', lineWidth:2});
-        drawLandmarks(overlayCtx, lm, {color:'#FF4444', lineWidth:2});
-
-        const wrist = lm[0];
-        const indexTip = lm[8];
-        const dx = wrist.x - indexTip.x;
-        const dy = wrist.y - indexTip.y;
-
-        let detected = null;
-        if(dy < -0.12) detected = "YouTube";      
-        else if(dx > 0.12) detected = "Messages"; 
-        else if(dx < -0.12) detected = "Camera";  
-
-        if(detected){
-          if(stableGesture.name === detected) stableGesture.count++;
-          else { stableGesture.name = detected; stableGesture.count = 1; }
-          status.innerText = `Detected: ${detected} (${stableGesture.count})`;
-
-          if(stableGesture.count >= 5){
-            performAction(detected);
-            stableGesture = { name: null, count: 0 };
-          }
-        } else {
-          stableGesture = { name: null, count: 0 };
-          status.innerText = "Waiting for stable gesture...";
-        }
-
-        debug.innerText = `dx: ${dx.toFixed(3)} dy: ${dy.toFixed(3)} detected: ${detected}`;
-      } else {
-        status.innerText = "Waiting for hand...";
-        debug.innerText = "debug: no hand detected";
-        stableGesture = { name: null, count: 0 };
+hands.onResults(results => {
+  resizeOverlay();
+  overlayCtx.clearRect(0,0,overlay.width,overlay.height);
+  if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0){
+    const lm = results.multiHandLandmarks[0];
+    drawLandmarksOnOverlay(lm);
+    const wrist = lm[0];
+    const indexTip = lm[8];
+    const dx = wrist.x - indexTip.x;
+    const dy = wrist.y - indexTip.y;
+    let detected = null;
+    if(dy < -0.12) detected = "YouTube";
+    else if(dx > 0.12) detected = "Messages";
+    else if(dx < -0.12) detected = "Camera";
+    if(detected){
+      if(stableGesture.name === detected) stableGesture.count++;
+      else { stableGesture.name = detected; stableGesture.count = 1; }
+      if(stableGesture.count >= 5){
+        performAction(detected);
+        stableGesture.name = null;
+        stableGesture.count = 0;
       }
-    });
-
-    const camera = new Camera(videoElement, {
-      onFrame: async () => { await hands.send({image: videoElement}); },
-      width: 640, height: 480, facingMode: { ideal: "environment" }
-    });
-
-    async function start() {
-      try { await camera.start(); status.innerText = "Camera started. Show your hand."; setTimeout(resizeOverlay, 300); }
-      catch (err) { status.innerText = "Camera error: " + err.message; debug.innerText = "Camera start failed."; }
+      status.innerText = `Detected: ${detected} (${stableGesture.count})`;
+    } else {
+      stableGesture.name = null;
+      stableGesture.count = 0;
+      status.innerText="Waiting for stable gesture...";
     }
-    start();
-  </script>
+  } else {
+    stableGesture.name = null;
+    stableGesture.count = 0;
+    status.innerText="Waiting for hand...";
+  }
+});
+
+const camera = new Camera(videoElement, {
+  onFrame: async () => { await hands.send({image: videoElement}); },
+  width:640,
+  height:480,
+  facingMode: "user"
+});
+
+async function startCamera(){
+  try {
+    await camera.start();
+    setTimeout(resizeOverlay, 300);
+    status.innerText="Camera started. Show your hand.";
+  } catch(err){
+    console.error('Camera start error:', err);
+    status.innerText="Camera access required. Allow camera and reload the page.";
+  }
+}
+
+startCamera();
+</script>
 </body>
 </html>
