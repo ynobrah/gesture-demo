@@ -1,236 +1,38 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html>
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Gesture Debug Demo</title>
+  <meta charset="UTF-8">
+  <title>Gesture Control</title>
   <style>
-    body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial; display:flex; flex-direction:column; align-items:center; background:#eee; }
-    #container { position:relative; width:100%; max-width:720px; margin-top:10px; }
-    video { width:100%; height:auto; background:#000; border-radius:8px; display:block; }
-    canvas.overlay { position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none; }
-    #status { margin:10px; font-size:16px; font-weight:600; color:#111; text-align:center; width:100%; max-width:720px; }
-    #debug { font-family:monospace; white-space:pre; text-align:left; width:100%; max-width:720px; background:#fff; padding:8px; border-radius:8px; box-sizing:border-box; }
+    body { margin: 0; display: flex; flex-direction: column; align-items: center; background: #111; color: white; }
+    video, canvas { position: absolute; left: 0; top: 0; transform: scaleX(-1); } 
+    #status, #debug { position: relative; z-index: 10; margin-top: 480px; padding: 10px; }
+    #debug { font-size: 12px; color: #0f0; white-space: pre; }
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 </head>
 <body>
-  <div id="container">
-    <video id="video" autoplay playsinline muted></video>
-    <canvas id="overlay" class="overlay"></canvas>
-  </div>
-  <div id="status">Starting camera...</div>
-  <pre id="debug">debug: waiting...</pre>
+  <video id="video" autoplay playsinline></video>
+  <canvas id="overlay"></canvas>
+  <div id="status">Loading...</div>
+  <div id="debug">debug: waiting...</div>
 
-<script>
-const videoElement = document.getElementById('video');
-const overlay = document.getElementById('overlay');
-const status = document.getElementById('status');
-const debug = document.getElementById('debug');
-const overlayCtx = overlay.getContext('2d');
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
-function resizeOverlay() {
-  const rect = videoElement.getBoundingClientRect();
-  overlay.width = rect.width;
-  overlay.height = rect.height;
-}
-window.addEventListener('resize', () => { setTimeout(resizeOverlay, 50); });
+  <script>
+    const videoElement = document.getElementById('video');
+    const overlay = document.getElementById('overlay');
+    const overlayCtx = overlay.getContext('2d');
+    const status = document.getElementById('status');
+    const debug = document.getElementById('debug');
 
-// MediaPipe Hands init
-const hands = new Hands({
-  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-});
-hands.setOptions({
-  maxNumHands: 1,
-  modelComplexity: 1,
-  minDetectionConfidence: 0.6,
-  minTrackingConfidence: 0.6
-});
-
-let stableGesture = { name: null, count: 0 };
-let lastDx = 0, lastDy = 0, lastDetected = null;
-
-// Draw helper (maps normalized coords to overlay)
-function drawLandmarksOnOverlay(landmarks){
-  overlayCtx.clearRect(0,0,overlay.width,overlay.height);
-  // draw connectors and landmarks using mediapipe drawing utils
-  drawConnectors(overlayCtx, landmarks, HAND_CONNECTIONS, {color:'#00FF88', lineWidth:2});
-  drawLandmarks(overlayCtx, landmarks, {color:'#FF4444', lineWidth:2});
-}
-
-hands.onResults(results => {
-  resizeOverlay();
-  if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0){
-    const lm = results.multiHandLandmarks[0];
-    drawLandmarksOnOverlay(lm);
-
-    const wrist = lm[0];
-    const indexTip = lm[8];
-
-    // compute dx, dy (normalized)
-    const dx = wrist.x - indexTip.x;
-    const dy = wrist.y - indexTip.y;
-
-    // detection logic (tunable thresholds)
-    let detected = null;
-    if(dy < -0.12) detected = "RAISE";
-    else if(dx > 0.12) detected = "SWIPE_RIGHT";
-    else if(dx < -0.12) detected = "SWIPE_LEFT";
-
-    if(detected){
-      if(stableGesture.name === detected) stableGesture.count++;
-      else { stableGesture.name = detected; stableGesture.count = 1; }
-    } else {
-      stableGesture.name = null; stableGesture.count = 0;
-    }
-
-    lastDetected = detected || "NONE";
-
-    status.innerText = `Detected: ${lastDetected} (${stableGesture.count})`;
-    debug.innerText = 
-`dx: ${dx.toFixed(3)}   dy: ${dy.toFixed(3)}
-detected: ${lastDetected}
-stableCount: ${stableGesture.count}
-landmarks: ${lm.length}
-tip x,y: ${indexTip.x.toFixed(3)}, ${indexTip.y.toFixed(3)}
-wrist x,y: ${wrist.x.toFixed(3)}, ${wrist.y.toFixed(3)}
-`;
-  } else {
-    overlayCtx.clearRect(0,0,overlay.width,overlay.height);
-    status.innerText = "Waiting for hand...";
-    debug.innerText = "debug: no hand detected";
-    stableGesture.name = null; stableGesture.count = 0;
-    lastDetected = "NONE";
-  }
-});
-
-// Start camera preferring back camera
-const camera = new Camera(videoElement, {
-  onFrame: async () => { await hands.send({image: videoElement}); },
-  width: 640,
-  height: 480,
-  facingMode: { ideal: "environment" }
-});
-
-async function start() {
-  try {
-    await camera.start();
-    status.innerText = "Camera started. Show your hand.";
-    setTimeout(resizeOverlay, 300);
-  } catch (err) {
-    status.innerText = "Camera error: " + (err && err.message ? err.message : String(err));
-    debug.innerText = "Camera start failed. Check camera permission and try a different browser.";
-  }
-}
-
-start();
-</script>
-</body>
-</html>  overlay.height = rect.height;
-}
-window.addEventListener('resize', () => { setTimeout(resizeOverlay, 50); });
-
-// MediaPipe Hands init
-const hands = new Hands({
-  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-});
-hands.setOptions({
-  maxNumHands: 1,
-  modelComplexity: 1,
-  minDetectionConfidence: 0.6,
-  minTrackingConfidence: 0.6
-});
-
-let stableGesture = { name: null, count: 0 };
-let lastDx = 0, lastDy = 0, lastDetected = null;
-
-// Draw helper (maps normalized coords to overlay)
-function drawLandmarksOnOverlay(landmarks){
-  overlayCtx.clearRect(0,0,overlay.width,overlay.height);
-  // draw connectors and landmarks using mediapipe drawing utils
-  drawConnectors(overlayCtx, landmarks, HAND_CONNECTIONS, {color:'#00FF88', lineWidth:2});
-  drawLandmarks(overlayCtx, landmarks, {color:'#FF4444', lineWidth:2});
-}
-
-hands.onResults(results => {
-  resizeOverlay();
-  if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0){
-    const lm = results.multiHandLandmarks[0];
-    drawLandmarksOnOverlay(lm);
-
-    const wrist = lm[0];
-    const indexTip = lm[8];
-
-    // compute dx, dy (normalized)
-    const dx = wrist.x - indexTip.x;
-    const dy = wrist.y - indexTip.y;
-    lastDx = dx;
-    lastDy = dy;
-
-    // detection logic (tunable thresholds)
-    let detected = null;
-    if(dy < -0.12) detected = "RAISE";
-    else if(dx > 0.12) detected = "SWIPE_RIGHT";
-    else if(dx < -0.12) detected = "SWIPE_LEFT";
-
-    if(detected){
-      if(stableGesture.name === detected) stableGesture.count++;
-      else { stableGesture.name = detected; stableGesture.count = 1; }
-    } else {
-      stableGesture.name = null; stableGesture.count = 0;
-    }
-
-    lastDetected = detected || "NONE";
-
-    status.innerText = `Detected: ${lastDetected} (${stableGesture.count})`;
-    debug.innerText = 
-`dx: ${dx.toFixed(3)}   dy: ${dy.toFixed(3)}
-detected: ${lastDetected}
-stableCount: ${stableGesture.count}
-landmarks: ${lm.length}
-tip x,y: ${indexTip.x.toFixed(3)}, ${indexTip.y.toFixed(3)}
-wrist x,y: ${wrist.x.toFixed(3)}, ${wrist.y.toFixed(3)}
-`;
-  } else {
-    overlayCtx.clearRect(0,0,overlay.width,overlay.height);
-    status.innerText = "Waiting for hand...";
-    debug.innerText = "debug: no hand detected";
-    stableGesture.name = null; stableGesture.count = 0;
-    lastDetected = "NONE";
-  }
-});
-
-// Start camera preferring back camera
-const camera = new Camera(videoElement, {
-  onFrame: async () => { await hands.send({image: videoElement}); },
-  width: 640,
-  height: 480,
-  facingMode: { ideal: "environment" }
-});
-
-async function start() {
-  try {
-    await camera.start();
-    status.innerText = "Camera started. Show your hand.";
-    setTimeout(resizeOverlay, 300);
-  } catch (err) {
-    status.innerText = "Camera error: " + (err && err.message ? err.message : String(err));
-    debug.innerText = "Camera start failed. Check camera permission and try a different browser.";
-  }
-}
-
-start();
-</script>
-</body>
-</html>      overlay.height = rect.height;
-      overlay.style.left = rect.left + 'px';
-      overlay.style.top = rect.top + 'px';
+    function resizeOverlay(){
+      overlay.width = videoElement.videoWidth;
+      overlay.height = videoElement.videoHeight;
     }
     window.addEventListener('resize', () => { setTimeout(resizeOverlay, 50); });
 
-    // Gesture action throttle
     let lastCommandTime = 0;
     function performAction(cmd){
       const now = Date.now();
@@ -241,132 +43,62 @@ start();
       else if(cmd === "Camera"){ status.innerText = "Action: Opening Camera"; window.location.href = "https://www.google.com"; }
     }
 
-    // Create MediaPipe Hands instance
-    const hands = new Hands({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-    });
+    const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
 
-    hands.setOptions({
-      maxNumHands: 1,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.6,
-      minTrackingConfidence: 0.6
-    });
-
-    // Simple stability filter
     let stableGesture = { name: null, count: 0 };
 
-    // Convert normalized landmark to overlay coordinates
-    function landmarkToPoint(landmark){
-      const w = overlay.width;
-      const h = overlay.height;
-      return { x: landmark.x * w, y: landmark.y * h };
-    }
-
     hands.onResults(results => {
-      // update overlay size if needed
       resizeOverlay();
       overlayCtx.clearRect(0,0,overlay.width,overlay.height);
 
       if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0){
-        const landmarks = results.multiHandLandmarks[0];
+        const lm = results.multiHandLandmarks[0];
+        drawConnectors(overlayCtx, lm, HAND_CONNECTIONS, {color:'#00FF88', lineWidth:2});
+        drawLandmarks(overlayCtx, lm, {color:'#FF4444', lineWidth:2});
 
-        // draw landmarks and connections for debugging and confirmation
-        drawConnectors(overlayCtx, landmarks, HAND_CONNECTIONS, {color:'#00FF88', lineWidth:2});
-        drawLandmarks(overlayCtx, landmarks, {color:'#FF4444', lineWidth:1});
-
-        // wrist = index 0, index tip = index 8
-        const wrist = landmarks[0];
-        const indexTip = landmarks[8];
-
-        // compensate mirrored camera by using wrist minus indexTip
+        const wrist = lm[0];
+        const indexTip = lm[8];
         const dx = wrist.x - indexTip.x;
         const dy = wrist.y - indexTip.y;
 
-        // thresholds for detection (tunable)
         let detected = null;
-        if(dy < -0.12) detected = "YouTube";       // index tip significantly above wrist -> raise
-        else if(dx > 0.12) detected = "Messages";  // index tip significantly to the left of wrist in mirrored coords -> swipe right
-        else if(dx < -0.12) detected = "Camera";   // index tip to the right -> swipe left
+        if(dy < -0.12) detected = "YouTube";      
+        else if(dx > 0.12) detected = "Messages"; 
+        else if(dx < -0.12) detected = "Camera";  
 
         if(detected){
           if(stableGesture.name === detected) stableGesture.count++;
           else { stableGesture.name = detected; stableGesture.count = 1; }
           status.innerText = `Detected: ${detected} (${stableGesture.count})`;
 
-          // require stability of 5 consecutive frames
           if(stableGesture.count >= 5){
             performAction(detected);
-            stableGesture.name = null;
-            stableGesture.count = 0;
+            stableGesture = { name: null, count: 0 };
           }
         } else {
-          stableGesture.name = null;
-          stableGesture.count = 0;
+          stableGesture = { name: null, count: 0 };
           status.innerText = "Waiting for stable gesture...";
         }
+
+        debug.innerText = `dx: ${dx.toFixed(3)} dy: ${dy.toFixed(3)} detected: ${detected}`;
       } else {
-        stableGesture.name = null;
-        stableGesture.count = 0;
         status.innerText = "Waiting for hand...";
+        debug.innerText = "debug: no hand detected";
+        stableGesture = { name: null, count: 0 };
       }
     });
 
-    // Start camera with preference for back camera
     const camera = new Camera(videoElement, {
-      onFrame: async () => {
-        await hands.send({image: videoElement});
-      },
-      width: 640,
-      height: 480,
-      facingMode: { ideal: "environment" } // prefer back camera
+      onFrame: async () => { await hands.send({image: videoElement}); },
+      width: 640, height: 480, facingMode: { ideal: "environment" }
     });
 
-    // Start sequence with permission handling
-    async function startCamera() {
-      try {
-        await camera.start();
-        // small delay then resize overlay
-        setTimeout(resizeOverlay, 300);
-        status.innerText = "Camera started. Show your hand.";
-      } catch (err) {
-        console.error('Camera start error:', err);
-        status.innerText = "Camera access required. Allow camera and reload the page.";
-      }
+    async function start() {
+      try { await camera.start(); status.innerText = "Camera started. Show your hand."; setTimeout(resizeOverlay, 300); }
+      catch (err) { status.innerText = "Camera error: " + err.message; debug.innerText = "Camera start failed."; }
     }
-
-    // Kick off
-    startCamera();
+    start();
   </script>
-</body>
-</html>    const indexTip = landmarks[8];
-
-    // Adjust for mirrored camera
-    const dx = wrist.x - indexTip.x;
-    const dy = wrist.y - indexTip.y;
-
-    if(dy < -0.15){
-      status.innerText = "Gesture: Raise Hand → YouTube";
-      window.location.href = "https://www.youtube.com";
-    } else if(dx > 0.15){
-      status.innerText = "Gesture: Swipe Right → Messages";
-      window.location.href = "sms:";
-    } else if(dx < -0.15){
-      status.innerText = "Gesture: Swipe Left → Camera";
-      window.location.href = "https://www.google.com";
-    }
-
-  } else {
-    status.innerText = "Waiting for gesture...";
-  }
-});
-
-const camera = new Camera(videoElement, {
-  onFrame: async () => { await hands.send({image: videoElement}); },
-  width: 640,
-  height: 480
-});
-camera.start();
-</script>
 </body>
 </html>
